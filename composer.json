@@ -1,5 +1,5 @@
 {
-    "name": "evenement/evenement",
+    "name": "openwebx/evenement",
     "description": "Événement is a very simple event dispatching library for PHP",
     "license": "MIT",
     "keywords": [
