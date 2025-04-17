@@ -1,163 +1,124 @@
 <?php declare(strict_types=1);
 
-/*
- * This file is part of Evenement.
- *
- * (c) Igor Wiedler <igor@wiedler.ch>
- *
- * For the full copyright and license information, please view the LICENSE
- * file that was distributed with this source code.
- */
-
 namespace Evenement;
 
 use InvalidArgumentException;
 
-use function array_keys;
-use function array_merge;
-use function array_search;
-use function array_unique;
-use function array_values;
-use function count;
-
 trait EventEmitterTrait
 {
     /**
-     * @var array<string, array<int, (callable)>>
+     * Holds all listeners for each event.
+     *
+     * @var array<string, array<int, array{0:callable, 1:bool}>>  // [ [listener, onceFlag], … ]
      */
-    protected array $listeners = [];
+    private array $listeners = [];
 
     /**
-     * @var array<string, array<int, (callable)>>
+     * Attach a listener that will be called every time $event is emitted.
      */
-    protected array $onceListeners = [];
-
     public function on(string $event, callable $listener): static
     {
-        if ($event === '') {
-            throw new InvalidArgumentException('event name must not be an empty string');
-        }
-
-        if (!isset($this->listeners[$event])) {
-            $this->listeners[$event] = [];
-        }
-
-        $this->listeners[$event][] = $listener;
-
+        $this->assertValidEvent($event);
+        $this->listeners[$event][] = [$listener, false];
         return $this;
     }
 
+    /**
+     * Attach a listener that will be called only the first time $event is emitted.
+     */
     public function once(string $event, callable $listener): static
     {
-        if ($event === '') {
-            throw new InvalidArgumentException('event name must not be an empty string');
-        }
-
-        if (!isset($this->onceListeners[$event])) {
-            $this->onceListeners[$event] = [];
-        }
-
-        $this->onceListeners[$event][] = $listener;
-
+        $this->assertValidEvent($event);
+        $this->listeners[$event][] = [$listener, true];
         return $this;
     }
 
+    /**
+     * Remove a specific listener (either once- or persistent) for $event.
+     */
     public function removeListener(string $event, callable $listener): void
     {
-        if ($event === '') {
-            throw new InvalidArgumentException('event name must not be an empty string');
+        $this->assertValidEvent($event);
+
+        if (empty($this->listeners[$event])) {
+            return;
         }
 
-        if (isset($this->listeners[$event])) {
-            $index = array_search($listener, $this->listeners[$event], true);
-
-            if (false !== $index) {
-                unset($this->listeners[$event][$index]);
-
-                if (count($this->listeners[$event]) === 0) {
-                    unset($this->listeners[$event]);
-                }
+        foreach ($this->listeners[$event] as $key => [$cb, $once]) {
+            if ($cb === $listener) {
+                unset($this->listeners[$event][$key]);
             }
         }
 
-        if (isset($this->onceListeners[$event])) {
-            $index = array_search($listener, $this->onceListeners[$event], true);
-
-            if (false !== $index) {
-                unset($this->onceListeners[$event][$index]);
-
-                if (count($this->onceListeners[$event]) === 0) {
-                    unset($this->onceListeners[$event]);
-                }
-            }
+        if (empty($this->listeners[$event])) {
+            unset($this->listeners[$event]);
+        } else {
+            // reindex
+            $this->listeners[$event] = array_values($this->listeners[$event]);
         }
     }
 
+    /**
+     * Remove all listeners, or only those for a specific $event.
+     */
     public function removeAllListeners(?string $event = null): void
     {
         if ($event !== null) {
-            unset($this->listeners[$event], $this->onceListeners[$event]);
+            unset($this->listeners[$event]);
         } else {
             $this->listeners = [];
-            $this->onceListeners = [];
         }
     }
 
+    /**
+     * Get all listeners (once and persistent), either for $event or for every event.
+     *
+     * @return array<string, list<callable>>|list<callable>
+     */
     public function listeners(?string $event = null): array
     {
-        if ($event === null) {
-            $events = [];
-            $eventNames = array_unique(
-                array_merge(
-                    array_keys($this->listeners),
-                    array_keys($this->onceListeners)
-                )
-            );
-
-            foreach ($eventNames as $eventName) {
-                $events[$eventName] = array_merge(
-                    $this->listeners[$eventName] ?? [],
-                    $this->onceListeners[$eventName] ?? []
-                );
-            }
-
-            return $events;
+        if ($event !== null) {
+            return array_column($this->listeners[$event] ?? [], 0);
         }
 
-        return array_merge(
-            $this->listeners[$event] ?? [],
-            $this->onceListeners[$event] ?? []
-        );
+        return array_map(function ($entries) {
+            return array_column($entries, 0);
+        }, $this->listeners);
     }
 
-    public function emit(string $event, array $arguments = []): void
+    /**
+     * Emit $event, passing all following args to each listener.
+     */
+    public function emit(string $event, mixed ...$arguments): void
+    {
+        $this->assertValidEvent($event);
+
+        if (empty($this->listeners[$event])) {
+            return;
+        }
+
+        // We need to reindex here, because we may unset items mid‑loop
+        $entries = $this->listeners[$event];
+        foreach ($entries as $idx => [$listener, $once]) {
+            $listener(...$arguments);
+
+            if ($once) {
+                unset($this->listeners[$event][$idx]);
+            }
+        }
+
+        if (empty($this->listeners[$event])) {
+            unset($this->listeners[$event]);
+        } else {
+            // ensure our keys stay sequential
+            $this->listeners[$event] = array_values($this->listeners[$event]);
+        }
+    }
+
+    protected function assertValidEvent(string $event): void
     {
         if ($event === '') {
-            throw new InvalidArgumentException('event name must not be an empty string');
-        }
-
-        $listeners = [];
-        if (isset($this->listeners[$event])) {
-            $listeners = array_values($this->listeners[$event]);
-        }
-
-        $onceListeners = [];
-        if (isset($this->onceListeners[$event])) {
-            $onceListeners = array_values($this->onceListeners[$event]);
-        }
-
-        if ($listeners !== []) {
-            foreach ($listeners as $listener) {
-                $listener(...$arguments);
-            }
-        }
-
-        if ($onceListeners !== []) {
-            unset($this->onceListeners[$event]);
-
-            foreach ($onceListeners as $listener) {
-                $listener(...$arguments);
-            }
+            throw new InvalidArgumentException('Event name must not be an empty string.');
         }
     }
 }

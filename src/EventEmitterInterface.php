@@ -48,7 +48,8 @@ interface EventEmitterInterface
     /**
      * Emit an event, which will call all listeners.
      *
-     * @param array<mixed> $arguments
+     * @param string $event
+     * @param array $arguments
      */
     public function emit(string $event, array $arguments = []): void;
 }
